@@ -251,13 +251,21 @@ export class MusicContextV3 extends MusicContextBase {
 	}
 	private progressDispatchHandle = 0;
 	private lastProgress = 0;
+	private seekFlag = false;
 	private onPlayProgress(
 		audioId: string,
 		progress: number,
 		loadProgress: number,
 		isTween = false,
 	) {
-		if (!isTween && (Math.abs(progress - this.lastProgress) > 1 || progress <= 0.01)) {
+		const progressDelta = progress - this.lastProgress;
+		const isSeekOperation = this.seekFlag || Math.abs(progressDelta) > 2;
+		if (isSeekOperation && !isTween) {
+			this.seekFlag = false;
+			log("检测到进度跳变，可能是 seek 操作", audioId, progress, this.lastProgress);
+			this.lastProgress = progress;
+			this.musicPlayProgress = (progress * 1000) | 0;
+		} else if (!isTween && (Math.abs(progressDelta) > 1 || progress <= 0.01)) {
 			warn(
 				"音乐播放进度异常",
 				audioId,
@@ -267,16 +275,16 @@ export class MusicContextV3 extends MusicContextBase {
 			);
 			this.lastProgress = progress;
 			return;
-		}
-		this.lastProgress = progress;
-		// log("音乐加载进度", audioId, progress, loadProgress);
-		if (this.playState === PlayState.Playing) {
-			this.musicPlayProgress = Math.max(
-				(progress * 1000) | 0,
-				this.musicPlayProgress,
-			);
 		} else {
-			this.musicPlayProgress = (progress * 1000) | 0;
+			this.lastProgress = progress;
+			if (this.playState === PlayState.Playing) {
+				this.musicPlayProgress = Math.max(
+					(progress * 1000) | 0,
+					this.musicPlayProgress,
+				);
+			} else {
+				this.musicPlayProgress = (progress * 1000) | 0;
+			}
 		}
 		if (this.progressDispatchHandle) {
 			cancelAnimationFrame(this.progressDispatchHandle);
@@ -348,6 +356,8 @@ export class MusicContextV3 extends MusicContextBase {
 	override seekToPosition(timeMS: number): void {
 		this.musicPlayProgress = timeMS;
 		this.lastProgress = timeMS / 1000;
+		this.seekFlag = true;
+		this.tweenAtom = Symbol("tween-atom");
 		legacyNativeCmder._envAdapter.callAdapter("audioplayer.seek", () => {}, [
 			this.audioId,
 			genAudioPlayerCommand(this.audioId, "seek"),
