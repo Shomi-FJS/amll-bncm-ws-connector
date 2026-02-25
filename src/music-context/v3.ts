@@ -257,7 +257,7 @@ export class MusicContextV3 extends MusicContextBase {
 		loadProgress: number,
 		isTween = false,
 	) {
-		if (Math.abs(progress - this.lastProgress) > 1 || progress <= 0.01) {
+		if (!isTween && (Math.abs(progress - this.lastProgress) > 1 || progress <= 0.01)) {
 			warn(
 				"音乐播放进度异常",
 				audioId,
@@ -347,6 +347,7 @@ export class MusicContextV3 extends MusicContextBase {
 	}
 	override seekToPosition(timeMS: number): void {
 		this.musicPlayProgress = timeMS;
+		this.lastProgress = timeMS / 1000;
 		legacyNativeCmder._envAdapter.callAdapter("audioplayer.seek", () => {}, [
 			this.audioId,
 			genAudioPlayerCommand(this.audioId, "seek"),

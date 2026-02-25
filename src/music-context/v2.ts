@@ -317,13 +317,25 @@ export class MusicContextV2 extends MusicContextBase {
 		this.dispatchTypedEvent("unload", new Event("unload"));
 	}
 	private progressDispatchHandle = 0;
+	private lastProgress = 0;
 	private onPlayProgress(
 		audioId: string,
 		progress: number,
 		loadProgress: number,
 		isTween = false,
 	) {
-		// log("音乐加载进度", audioId, progress, loadProgress);
+		if (!isTween && (Math.abs(progress - this.lastProgress) > 1 || progress <= 0.01)) {
+			warn(
+				"音乐播放进度异常",
+				audioId,
+				progress,
+				loadProgress,
+				this.lastProgress,
+			);
+			this.lastProgress = progress;
+			return;
+		}
+		this.lastProgress = progress;
 		if (this.playState === PlayState.Playing) {
 			this.musicPlayProgress = Math.max(
 				(progress * 1000) | 0,
@@ -335,12 +347,13 @@ export class MusicContextV2 extends MusicContextBase {
 		if (this.progressDispatchHandle) {
 			cancelAnimationFrame(this.progressDispatchHandle);
 		}
+		const curMusicPlayProgress = this.musicPlayProgress;
 		this.progressDispatchHandle = requestAnimationFrame(() => {
 			this.dispatchTypedEvent(
 				"progress",
 				new CustomEvent("progress", {
 					detail: {
-						progress: this.musicPlayProgress,
+						progress: curMusicPlayProgress,
 					},
 				}),
 			);
@@ -415,6 +428,7 @@ export class MusicContextV2 extends MusicContextBase {
 	}
 	override seekToPosition(timeMS: number): void {
 		this.musicPlayProgress = timeMS;
+		this.lastProgress = timeMS / 1000;
 		this.tweenAtom = Symbol("tween-atom");
 		legacyNativeCmder._envAdapter.callAdapter("audioplayer.seek", () => {}, [
 			this.audioId,
