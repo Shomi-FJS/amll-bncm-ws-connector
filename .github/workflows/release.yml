@@ -1,4 +1,4 @@
-name: Build and Release
+name: 构建并发布
 
 on:
   push:
@@ -11,46 +11,45 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - name: Checkout repository
+      - name: 检出代码
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: 安装 Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: 'pnpm'
 
-      - name: Install pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10.2.1
-
-      - name: Install dependencies
+      - name: 安装依赖
         run: pnpm install
 
-      - name: Build plugin
+      - name: 构建插件
         run: pnpm run build:pack
 
-      - name: Get version from package.json
+      - name: 获取版本号
         id: version
         shell: bash
         run: |
           VERSION=$(node -p "require('./package.json').version")
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-      - name: Get current date
+      - name: 获取当前时间
         id: date
         shell: bash
         run: |
           DATE=$(date +'%Y%m%d%H%M%S')
           echo "date=$DATE" >> $GITHUB_OUTPUT
 
-      - name: Create ZIP artifact
+      - name: 创建 ZIP 压缩包
         shell: bash
         run: |
           cd dist
           zip -r ../AMLL-WS-Connector-v${{ steps.version.outputs.version }}-${{ steps.date.outputs.date }}.zip .
 
-      - name: Create Release
+      - name: 创建 Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.version.outputs.version }}-${{ steps.date.outputs.date }}
