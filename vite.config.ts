@@ -273,11 +273,6 @@ export default defineConfig(({ mode }) => {
 			alias: {
 				"@applemusic-like-lyrics/react": resolve(amllDevPath, "react/src"),
 				"@applemusic-like-lyrics/ttml": resolve(amllDevPath, "ttml/src"),
-				"@applemusic-like-lyrics/lyric": resolve(amllDevPath, "lyric/pkg"),
-				"@applemusic-like-lyrics/ws-protocol": resolve(
-					amllDevPath,
-					"ws-protocol",
-				),
 			},
 		},
 		define:

@@ -7,6 +7,7 @@ export interface WSLyricWord {
 	startTime: number;
 	endTime: number;
 	word: string;
+	romanWord: string;
 }
 
 export interface WSLyricLine {
@@ -19,55 +20,49 @@ export interface WSLyricLine {
 	romanLyric: string;
 }
 
-export type WSBodyMessageMap = {
-	ping: undefined;
-	pong: undefined;
-	setMusicInfo: {
-		musicId: string;
-		musicName: string;
-		albumId: string;
-		albumName: string;
-		artists: WSArtist[];
-		duration: number;
-	};
-	setMusicAlbumCoverImageURI: {
-		imgUrl: string;
-	};
-	setMusicAlbumCoverImageData: {
-		data: number[];
-	};
-	onPlayProgress: {
-		progress: number;
-	};
-	onVolumeChanged: {
-		volume: number;
-	};
-	onPaused: undefined;
-	onResumed: undefined;
-	onAudioData: {
-		data: number[];
-	};
-	setLyric: {
-		data: WSLyricLine[];
-	};
-	setLyricFromTTML: {
-		data: string;
-	};
-	pause: undefined;
-	resume: undefined;
-	forwardSong: undefined;
-	backwardSong: undefined;
-	setVolume: {
-		volume: number;
-	};
-	seekPlayProgress: {
-		progress: number;
-	};
-};
+export interface WSMusicInfo {
+	musicId: string;
+	musicName: string;
+	albumId: string;
+	albumName: string;
+	artists: WSArtist[];
+	duration: number;
+}
 
-export type WSBodyMap = {
-	[T in keyof WSBodyMessageMap]: {
-		type: T;
-		value: WSBodyMessageMap[T];
-	};
-};
+export interface WSImageData {
+	mimeType: string;
+	data: string;
+}
+
+export type WSAlbumCover =
+	| { source: "uri"; url: string }
+	| { source: "data"; image: WSImageData };
+
+export type WSLyricContent =
+	| { format: "structured"; lines: WSLyricLine[] }
+	| { format: "ttml"; data: string };
+
+export type WSCommand =
+	| { command: "pause" }
+	| { command: "resume" }
+	| { command: "forwardSong" }
+	| { command: "backwardSong" }
+	| { command: "setVolume"; volume: number }
+	| { command: "seekPlayProgress"; progress: number };
+
+export type WSStateUpdate =
+	| ({ update: "setMusic" } & WSMusicInfo)
+	| ({ update: "setCover" } & WSAlbumCover)
+	| ({ update: "setLyric" } & WSLyricContent)
+	| { update: "progress"; progress: number }
+	| { update: "volume"; volume: number }
+	| { update: "paused" }
+	| { update: "resumed" }
+	| { update: "audioData"; data: number[] };
+
+export type WSPayload =
+	| { type: "initialize" }
+	| { type: "ping" }
+	| { type: "pong" }
+	| { type: "command"; value: WSCommand }
+	| { type: "state"; value: WSStateUpdate };

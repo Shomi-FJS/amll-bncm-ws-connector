@@ -8,17 +8,15 @@ import {
 	musicDurationAtom,
 	musicIdAtom,
 	musicNameAtom,
-	currentVolumeAtom,
 	playStatusAtom,
 } from "./wrapper";
 import { log, warn } from "../utils/logger";
-import { toBody, parseBody } from "@applemusic-like-lyrics/ws-protocol";
 import { enableWSPlayer, wsPlayerURL } from "../components/config/atoms";
 import { debounce } from "../utils/debounce";
 import { lyricLinesAtom } from "../lyric/provider";
 import { PlayState, type MusicStatusGetterEvents } from ".";
 import { ConnectionColor, wsConnectionStatusAtom } from "./ws-states";
-import type { WSBodyMap, WSBodyMessageMap } from "./ws-types.js";
+import type { WSPayload, WSStateUpdate, WSCommand, WSLyricLine } from "./ws-types.js";
 
 export const WebSocketWrapper: FC = () => {
 	const musicId = useAtomValue(musicIdAtom);
@@ -29,37 +27,29 @@ export const WebSocketWrapper: FC = () => {
 	const artists = useAtomValue(musicArtistsAtom);
 	const musicContext = useAtomValue(musicContextAtom);
 	const playProgress = useAtomValue(currentTimeAtom);
-	const volume = useAtomValue(currentVolumeAtom);
 	const playStatus = useAtomValue(playStatusAtom);
 	const [wsStatus, setWSStatus] = useAtom(wsConnectionStatusAtom);
 	const enabled = useAtomValue(enableWSPlayer);
 	const url = useAtomValue(wsPlayerURL);
 	const ws = useRef<WebSocket>();
 
-	const sendWSMessage = useCallback(function sendWSMessage<
-		T extends keyof WSBodyMessageMap,
-	>(
-		type: T,
-		value: WSBodyMessageMap[T] extends undefined
-			? undefined
-			: WSBodyMessageMap[T] | undefined = undefined,
-	) {
+	const sendWSPayload = useCallback(function sendWSPayload(payload: WSPayload) {
 		try {
-			ws.current?.send(
-				toBody({
-					type,
-					value,
-				}),
-			);
+			ws.current?.send(JSON.stringify(payload));
 		} catch (err) {
 			warn("发送消息到播放器失败", err);
-			warn("出错的消息", type, value);
+			warn("出错的消息", payload);
 		}
 	}, []);
 
+	const sendStateUpdate = useCallback(function sendStateUpdate(value: WSStateUpdate) {
+		sendWSPayload({ type: "state", value });
+	}, [sendWSPayload]);
+
 	useEffect(() => {
 		if (wsStatus.color !== ConnectionColor.Active) return;
-		sendWSMessage("setMusicInfo", {
+		sendStateUpdate({
+			update: "setMusic",
 			musicId,
 			musicName,
 			albumId: "",
@@ -70,70 +60,63 @@ export const WebSocketWrapper: FC = () => {
 			})),
 			duration: musicDuration,
 		});
-	}, [musicId, musicName, musicDuration, artists, wsStatus, sendWSMessage]);
+	}, [musicId, musicName, musicDuration, artists, wsStatus, sendStateUpdate]);
 
 	useEffect(() => {
 		if (wsStatus.color !== ConnectionColor.Active) return;
-		sendWSMessage("onPlayProgress", {
+		sendStateUpdate({
+			update: "progress",
 			progress: playProgress,
 		});
-	}, [playProgress, sendWSMessage, wsStatus]);
-
-	useEffect(() => {
-		if (wsStatus.color !== ConnectionColor.Active) return;
-		sendWSMessage("setVolume", {
-			volume: volume,
-		});
-	}, [volume, sendWSMessage, wsStatus]);
+	}, [playProgress, sendStateUpdate, wsStatus]);
 
 	useEffect(() => {
 		if (wsStatus.color !== ConnectionColor.Active) return;
 		if (lyricLines.state === "hasData") {
 			const clampTime = (time: number) =>
 				Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, time | 0));
-			sendWSMessage("setLyric", {
-				data: lyricLines.data.map((line) => ({
+			sendStateUpdate({
+				update: "setLyric",
+				format: "structured",
+				lines: lyricLines.data.map((line) => ({
 					...line,
 					startTime: clampTime(line.startTime),
 					endTime: clampTime(line.endTime),
 					words: line.words.map((word) => ({
 						...word,
+						romanWord: "",
 						startTime: clampTime(word.startTime),
 						endTime: clampTime(word.endTime),
 					})),
 				})),
 			});
 		}
-	}, [lyricLines, sendWSMessage, wsStatus]);
+	}, [lyricLines, sendStateUpdate, wsStatus]);
 
 	useEffect(() => {
 		if (wsStatus.color !== ConnectionColor.Active) return;
-		sendWSMessage("setMusicAlbumCoverImageURI", {
-			imgUrl: musicCover,
+		sendStateUpdate({
+			update: "setCover",
+			source: "uri",
+			url: musicCover,
 		});
-	}, [musicCover, sendWSMessage, wsStatus]);
+	}, [musicCover, sendStateUpdate, wsStatus]);
 
 	useEffect(() => {
 		if (wsStatus.color !== ConnectionColor.Active) return;
 		if (playStatus === PlayState.Pausing) {
-			sendWSMessage("onPaused");
+			sendStateUpdate({ update: "paused" });
 		} else if (playStatus === PlayState.Playing) {
-			sendWSMessage("onResumed");
+			sendStateUpdate({ update: "resumed" });
 		}
-	}, [playStatus, sendWSMessage, wsStatus]);
+	}, [playStatus, sendStateUpdate, wsStatus]);
 
 	useEffect(() => {
 		if (musicContext && wsStatus.color === ConnectionColor.Active) {
 			musicContext.acquireAudioData();
 			const onAudioData = (evt: MusicStatusGetterEvents["audio-data"]) => {
-				ws.current?.send(
-					toBody({
-						type: "onAudioData",
-						value: {
-							data: new Uint8Array(evt.detail.data),
-						},
-					}),
-				);
+				const data = Array.from(new Uint8Array(evt.detail.data));
+				sendStateUpdate({ update: "audioData", data });
 			};
 			musicContext.addEventListener("audio-data", onAudioData);
 			return () => {
@@ -141,7 +124,7 @@ export const WebSocketWrapper: FC = () => {
 				musicContext.releaseAudioData();
 			};
 		}
-	}, [musicContext, wsStatus]);
+	}, [musicContext, wsStatus, sendStateUpdate]);
 
 	useEffect(() => {
 		if (!enabled) {
@@ -180,40 +163,50 @@ export const WebSocketWrapper: FC = () => {
 
 			webSocket.addEventListener("message", async (evt) => {
 				if (nowWS !== webSocket || canceled) return;
-				let data: WSBodyMap[keyof WSBodyMessageMap] = {
-					type: "ping",
-					value: undefined,
-				};
-				if (evt.data instanceof ArrayBuffer) {
-					data = parseBody(new Uint8Array(evt.data));
-				} else if (typeof evt.data === "string") {
-					data = parseBody(new TextEncoder().encode(evt.data));
-				} else if (evt.data instanceof Blob) {
-					data = parseBody(new Uint8Array(await evt.data.arrayBuffer()));
-				} else {
-					warn("未知的数据类型", evt.data);
+				let payload: WSPayload;
+				try {
+					if (typeof evt.data === "string") {
+						payload = JSON.parse(evt.data);
+					} else if (evt.data instanceof ArrayBuffer) {
+						payload = JSON.parse(new TextDecoder().decode(evt.data));
+					} else if (evt.data instanceof Blob) {
+						payload = JSON.parse(new TextDecoder().decode(await evt.data.arrayBuffer()));
+					} else {
+						warn("未知的数据类型", evt.data);
+						return;
+					}
+				} catch (err) {
+					warn("解析消息失败", err);
+					return;
 				}
-				switch (data.type) {
-					case "seekPlayProgress":
-						musicContext?.seekToPosition(data.value.progress);
-						break;
-					case "ping":
-						sendWSMessage("pong");
-						break;
-					case "pause":
-						musicContext?.pause();
-						break;
-					case "resume":
-						musicContext?.resume();
-						break;
-					case "forwardSong":
-						musicContext?.forwardSong();
-						break;
-					case "backwardSong":
-						musicContext?.rewindSong();
-						break;
-					case "setVolume":
-						musicContext?.setVolume(data.value.volume);
+
+				if (payload.type === "ping") {
+					sendWSPayload({ type: "pong" });
+					return;
+				}
+
+				if (payload.type === "command") {
+					const cmd = payload.value as WSCommand;
+					switch (cmd.command) {
+						case "pause":
+							musicContext?.pause();
+							break;
+						case "resume":
+							musicContext?.resume();
+							break;
+						case "forwardSong":
+							musicContext?.forwardSong();
+							break;
+						case "backwardSong":
+							musicContext?.rewindSong();
+							break;
+						case "setVolume":
+							musicContext?.setVolume(cmd.volume);
+							break;
+						case "seekPlayProgress":
+							musicContext?.seekToPosition(cmd.progress);
+							break;
+					}
 				}
 			});
 
@@ -253,6 +246,7 @@ export const WebSocketWrapper: FC = () => {
 				log("已连接到播放器");
 				ws.current?.close();
 				ws.current = webSocket;
+				sendWSPayload({ type: "initialize" });
 			});
 		};
 		const enqueueConnect = debounce(connect, 5000);
@@ -273,7 +267,7 @@ export const WebSocketWrapper: FC = () => {
 				text: "未开启",
 			});
 		};
-	}, [enabled, url, musicContext, setWSStatus, sendWSMessage]);
+	}, [enabled, url, musicContext, setWSStatus, sendWSPayload]);
 
 	return null;
 };

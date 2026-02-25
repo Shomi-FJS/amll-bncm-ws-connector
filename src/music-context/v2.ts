@@ -12,10 +12,11 @@ import {
 } from ".";
 import { appendRegisterCall, removeRegisterCall } from "../utils/channel";
 import { callCachedSearchFunction } from "../utils/func";
-import { log } from "../utils/logger";
+import { log, warn } from "../utils/logger";
 import { getNCMImageUrl } from "../utils/ncm-url";
 import { genRandomString } from "../utils/gen-random-string";
 import { normalizePath } from "../utils/path";
+import { FFTPlayer } from "@applemusic-like-lyrics/fft";
 
 interface AudioLoadInfo {
 	activeCode: number;
@@ -43,6 +44,7 @@ export class MusicContextV2 extends MusicContextBase {
 	private musicAlbumName = "";
 	private musicAlbumImage = "";
 	private artists: Artist[] = [];
+	private fftPlayer = new FFTPlayer();
 	private tweenAtom = Symbol("tween-atom");
 	private searchForAlbumCoverAtom = Symbol("search-for-album-cover-atom");
 	private readonly bindedOnMusicLoad: Function;
@@ -50,9 +52,12 @@ export class MusicContextV2 extends MusicContextBase {
 	private readonly bindedOnPlayProgress: Function;
 	private readonly bindedOnPlayStateChanged: Function;
 	private readonly bindedOnVolumeChanged: Function;
+	private readonly bindedOnAudioData: Function;
 	private audioId = "";
 	private audioQuality = AudioQualityType.Normal;
 	private forcePlayPositionLerp = false;
+	private audioDataLock = 0;
+	private fftBuf = new Float32Array(256);
 	constructor() {
 		super();
 		this.bindedOnMusicLoad = this.onMusicLoad.bind(this);
@@ -60,6 +65,21 @@ export class MusicContextV2 extends MusicContextBase {
 		this.bindedOnPlayProgress = this.onPlayProgress.bind(this);
 		this.bindedOnPlayStateChanged = this.onPlayStateChanged.bind(this);
 		this.bindedOnVolumeChanged = this.onVolumeChanged.bind(this);
+		this.bindedOnAudioData = this.onAudioData.bind(this);
+
+		interface NCMV2AudioData {
+			data: ArrayBuffer;
+			pts: number;
+		}
+		appendRegisterCall("AudioData", "audioplayer", (data: NCMV2AudioData) => {
+			this.fftPlayer.pushDataI16(48000, 2, new Int16Array(data.data));
+			this.dispatchTypedEvent(
+				"audio-data",
+				new CustomEvent("audio-data", {
+					detail: data,
+				}),
+			);
+		});
 		appendRegisterCall("Load", "audioplayer", this.bindedOnMusicLoad);
 		appendRegisterCall("End", "audioplayer", this.bindedOnMusicUnload);
 		// 在 Windows 版本中，这个函数会逐帧强制调用，也就是说会强制占用阻塞渲染线程
@@ -108,6 +128,71 @@ export class MusicContextV2 extends MusicContextBase {
 				},
 			}),
 		);
+	}
+	private onAudioData(data: { data: ArrayBuffer; pts: number }) {
+		this.fftPlayer.pushDataI16(48000, 2, new Int16Array(data.data));
+		this.dispatchTypedEvent(
+			"audio-data",
+			new CustomEvent("audio-data", {
+				detail: data,
+			}),
+		);
+		if (this.audioDataLock) requestAnimationFrame(() => this.onFFTTick());
+	}
+	private onFFTTick() {
+		if (this.fftPlayer.read(this.fftBuf)) {
+			this.dispatchTypedEvent(
+				"fft-data",
+				new CustomEvent("fft-data", {
+					detail: {
+						data: Array.from(this.fftBuf),
+					},
+				}),
+			);
+		}
+		if (this.audioDataLock) requestAnimationFrame(() => this.onFFTTick());
+	}
+	override acquireAudioData(): void {
+		if (!this.audioDataLock++) {
+			try {
+				channel.call("audioplayer.enableAudioData", () => {}, [1]);
+				log("已启用音频数据 (channel.call)");
+			} catch (e) {
+				warn("channel.call 失败，尝试 legacyNativeCmder", e);
+				try {
+					legacyNativeCmder._envAdapter.callAdapter(
+						"audioplayer.enableAudioData",
+						() => {},
+						["", "", 1],
+					);
+					log("已启用音频数据 (legacyNativeCmder)");
+				} catch (e2) {
+					warn("legacyNativeCmder 也失败", e2);
+				}
+			}
+			this.onFFTTick();
+		}
+	}
+	override releaseAudioData(): void {
+		if (this.audioDataLock <= 0) {
+			throw new Error("Audio data lock is already 0");
+		}
+		if (!--this.audioDataLock) {
+			try {
+				channel.call("audioplayer.enableAudioData", () => {}, [0]);
+			} catch (e) {
+				warn("channel.call 失败，尝试 legacyNativeCmder", e);
+				try {
+					legacyNativeCmder._envAdapter.callAdapter(
+						"audioplayer.enableAudioData",
+						() => {},
+						["", "", 0],
+					);
+				} catch (e2) {
+					warn("legacyNativeCmder 也失败", e2);
+				}
+			}
+		}
 	}
 	private onMusicLoad(audioId: string, info: AudioLoadInfo) {
 		log("音乐已加载", audioId, info);
