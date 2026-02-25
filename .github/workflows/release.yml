@@ -1,0 +1,68 @@
+name: Build and Release
+
+on:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.2.1
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Build plugin
+        run: pnpm run build:pack
+
+      - name: Get version from package.json
+        id: version
+        shell: bash
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Get current date
+        id: date
+        shell: bash
+        run: |
+          DATE=$(date +'%Y%m%d%H%M%S')
+          echo "date=$DATE" >> $GITHUB_OUTPUT
+
+      - name: Create ZIP artifact
+        shell: bash
+        run: |
+          cd dist
+          zip -r ../AMLL-WS-Connector-v${{ steps.version.outputs.version }}-${{ steps.date.outputs.date }}.zip .
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.version }}-${{ steps.date.outputs.date }}
+          name: AMLL WS Connector v${{ steps.version.outputs.version }} (${{ steps.date.outputs.date }})
+          body: |
+            自动构建发布
+            
+            版本: ${{ steps.version.outputs.version }}
+            构建时间: ${{ steps.date.outputs.date }}
+            提交: ${{ github.sha }}
+          files: |
+            AMLL-WS-Connector-v${{ steps.version.outputs.version }}-${{ steps.date.outputs.date }}.zip
+            dist/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
