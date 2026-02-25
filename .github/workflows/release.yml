@@ -6,13 +6,23 @@ on:
       - main
       - master
 
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
-    runs-on: windows-latest
+    name: 构建插件
+    runs-on: ubuntu-latest
 
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: 安装 pnpm
         uses: pnpm/action-setup@v4
@@ -20,34 +30,39 @@ jobs:
       - name: 安装 Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'pnpm'
+          node-version: lts/*
+          cache: pnpm
 
       - name: 安装依赖
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
 
       - name: 构建插件
         run: pnpm run build:pack
 
       - name: 获取版本号
         id: version
-        shell: bash
         run: |
           VERSION=$(node -p "require('./package.json').version")
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: 获取当前时间
         id: date
-        shell: bash
         run: |
           DATE=$(date +'%Y%m%d%H%M%S')
           echo "date=$DATE" >> $GITHUB_OUTPUT
 
       - name: 创建 ZIP 压缩包
-        shell: bash
         run: |
           cd dist
           zip -r ../AMLL-WS-Connector-v${{ steps.version.outputs.version }}-${{ steps.date.outputs.date }}.zip .
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: AMLL-WS-Connector-${{ steps.version.outputs.version }}-${{ steps.date.outputs.date }}
+          path: |
+            dist/*
+            AMLL-WS-Connector-v${{ steps.version.outputs.version }}-${{ steps.date.outputs.date }}.zip
 
       - name: 创建 Release
         uses: softprops/action-gh-release@v2
@@ -60,6 +75,8 @@ jobs:
             版本: ${{ steps.version.outputs.version }}
             构建时间: ${{ steps.date.outputs.date }}
             提交: ${{ github.sha }}
+            
+            最新提交: ${{ github.event.head_commit.message }}
           files: |
             AMLL-WS-Connector-v${{ steps.version.outputs.version }}-${{ steps.date.outputs.date }}.zip
             dist/*
